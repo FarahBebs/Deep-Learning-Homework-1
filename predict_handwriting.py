@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from PIL import Image, ImageFilter, ImageOps
+from scipy import ndimage
 
 from mlp import MLP, normalize
 
@@ -85,32 +86,38 @@ def mnist_style(ink):
     return np.clip(canvas, 0, 1)
 
 
-def split_digits(ink, min_gap=2):
+def split_digits(ink):
     """Split an image of a written number into digit images (left to right).
 
-    Uses the column projection: columns with no ink separate the digits.
+    Finds connected blobs of ink. Blobs touching the image border (page edges,
+    the table behind the paper) and tiny specks are ignored. Blobs that overlap
+    horizontally are merged, so a digit drawn with two strokes stays one digit.
     """
-    cols = (ink > 0).sum(0)
-    min_ink = max(1, int(0.002 * ink.shape[0]))
-    has_ink = cols >= min_ink
-    segments, start, gap = [], None, 0
-    for x, on in enumerate(has_ink):
-        if on:
-            if start is None:
-                start = x
-            gap = 0
-        elif start is not None:
-            gap += 1
-            if gap >= min_gap:
-                segments.append((start, x - gap + 1))
-                start, gap = None, 0
-    if start is not None:
-        segments.append((start, len(has_ink)))
-    # Drop specks much narrower than a real digit.
-    widths = [b - a for a, b in segments]
-    if widths:
-        segments = [s for s, w in zip(segments, widths) if w >= 0.15 * max(widths)]
-    return [ink[:, a:b] for a, b in segments]
+    labels, _ = ndimage.label(ink > 0, structure=np.ones((3, 3)))
+    h, w = ink.shape
+    blobs = []
+    for i, (ys, xs) in enumerate(ndimage.find_objects(labels), start=1):
+        if ys.start == 0 or xs.start == 0 or ys.stop == h or xs.stop == w:
+            continue
+        blobs.append(dict(x0=xs.start, x1=xs.stop, ids=[i], size=int((labels[ys, xs] == i).sum())))
+    if not blobs:
+        return []
+    biggest = max(b["size"] for b in blobs)
+    blobs = sorted((b for b in blobs if b["size"] >= 0.05 * biggest), key=lambda b: b["x0"])
+
+    digits = []
+    for b in blobs:
+        if digits:
+            last = digits[-1]
+            overlap = min(last["x1"], b["x1"]) - max(last["x0"], b["x0"])
+            if overlap > 0.5 * min(last["x1"] - last["x0"], b["x1"] - b["x0"]):
+                last["x1"] = max(last["x1"], b["x1"])
+                last["ids"] += b["ids"]
+                continue
+        digits.append(dict(b))
+
+    # Keep only this digit's own ink, so parts of neighbouring digits are not included.
+    return [np.where(np.isin(labels, d["ids"]), ink, 0) for d in digits]
 
 
 def load_digits(raw_dir=RAW_DIR):

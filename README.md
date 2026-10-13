@@ -129,8 +129,8 @@ Training curves for every run are in [results/](results/) (`<name>_curves.png`).
 
 ## My handwritten student number
 
-**Raw images:** [handwriting/raw/](handwriting/raw/) — my student number 21120205709 written by hand on paper
-and photographed.
+**Raw image:** [handwriting/raw/student_id.jpg](handwriting/raw/student_id.jpg) — my student number
+21120205709 written by hand in pencil on paper and photographed with my phone.
 
 **Preprocessing** (`predict_handwriting.py`), done to make the photos look like MNIST:
 
@@ -138,7 +138,8 @@ and photographed.
 2. **Invert colors** if the background is bright, so that the digit is white on a black background
    like MNIST; subtract the paper's background level and stretch the ink to full brightness; set faint
    pixels (shadows) to 0.
-3. If the photo contains the whole number, **split it into digits** using empty columns between them.
+3. If the photo contains the whole number, **split it into digits**: find connected blobs of ink, ignore
+   blobs touching the image border and tiny specks, merge blobs that overlap horizontally, sort left to right.
 4. Crop each digit to its bounding box and **resize** so the longest side is 20 px (keeping the aspect
    ratio), then paste it into a **28 × 28** canvas and shift it so its **centre of mass** is in the
    middle — the same way the original MNIST digits were made.
@@ -148,7 +149,39 @@ The processed 28 × 28 digits are saved in [handwriting/processed/](handwriting/
 
 **Results:**
 
-> _To be filled in after running `python predict_handwriting.py` on the final photos._
+![Original photo](handwriting/raw/student_id.jpg)
+
+The photo was split automatically into 11 digits (connected ink blobs; blobs touching the image border,
+such as the page edge on the left and the table in the top-right corner, are ignored). After
+preprocessing, and the predictions of Experiment 1 vs. the best model:
+
+![Predictions on my handwriting](results/handwriting_predictions.png)
+
+| Position | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | Correct |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| True | 2 | 1 | 1 | 2 | 0 | 2 | 0 | 5 | 7 | 0 | 9 | |
+| exp1_baseline | 2 | 1 | 1 | 2 | 0 | **7** | 0 | 5 | 7 | 0 | 9 | 10/11 (90.9%) |
+| augmented_dropout | 2 | 1 | 1 | 2 | 0 | 2 | 0 | 5 | 7 | 0 | 9 | **11/11 (100%)** |
+
+All trained models on the same 11 digits ([results/handwriting_all_models.txt](results/handwriting_all_models.txt)):
+
+| Model | MNIST test acc | Predicted | My handwriting |
+|---|---|---|---|
+| exp1_baseline | 97.82% | 21120**7**05709 | 10/11 |
+| lr_0.01 | 96.29% | 21120**7**05709 | 10/11 |
+| lr_0.0001 | 97.63% | 21120**7**0**3**709 | 9/11 |
+| sgd_momentum | 98.18% | 21120**7**0**3**709 | 9/11 |
+| small_64_32 | 96.81% | 2112020**8**709 | 10/11 |
+| deep_512_256_128 | 98.05% | 21120**7**0**3**709 | 9/11 |
+| dropout_0.2 | 98.10% | 21120**9**0**3**709 | 9/11 |
+| batch_256 | 97.59% | 2112020**3**709 | 10/11 |
+| **augmented_dropout** | **98.53%** | 21120205709 | **11/11** |
+
+The two hard digits are the second **2** (position 6) and the **5** (position 8). My second 2 is narrow
+and tall with a small curl, so after resizing to 20 px its top-right hook and diagonal look like a 7.
+My 5 has a straight, separate top stroke and an open bottom curve, which models confuse with a 3 or 8.
+The digits are also written in pencil, so the strokes are thinner and fainter than the felt-tip
+strokes in MNIST.
 
 ## General evaluation and discussion
 
@@ -169,3 +202,11 @@ The processed 28 × 28 digits are saved in [handwriting/processed/](handwriting/
   has no built-in idea that a shifted digit is the same digit — so it is sensitive to these differences.
   Careful preprocessing (centring by centre of mass, 20 px box, same colours and normalization) removes
   a lot of the shift, and training with augmentation made the model more robust to what is left.
+- **MNIST accuracy does not guarantee real-world accuracy.** SGD with momentum was the best plain model on
+  the MNIST test set (98.18%) but read only 9 of my 11 digits, while the small 64-32 network (96.81% on
+  MNIST) read 10. Differences of a few tenths of a percent on MNIST say little about how a model handles
+  data from a different distribution. The only model that read my whole student number correctly was
+  the one trained with augmentation, because it had seen digits that were shifted, rotated, thinner or
+  thicker during training. With only 11 digits this is a small sample, but it is the expected effect:
+  the test set measures generalization *within* MNIST, while my handwriting measures generalization
+  under distribution shift.
